@@ -31,19 +31,8 @@ A `throw` route causes lookup to continue into the normal `main` routing table.
 
 So the effective routing flow is:
 
-```text id="rwcwgo"
-                    destination
-                         │
-             ┌───────────┴───────────┐
-             │                       │
-        LAN / China               other IP
-             │                       │
-          throw                  dev Meta
-             │                       │
-            main                   Mihomo
-             │                       │
-            WAN              DIRECT / PROXY
-```
+- **LAN/China**: throw - main - WAN
+- **other IP**: default dev Meta - Mihomo
 
 Mihomo itself uses:
 
@@ -69,19 +58,10 @@ This script deliberately avoids making DNS part of the main routing architecture
 
 Instead:
 
-```text id="xxfuvr"
-Linux kernel
-    ↓
-coarse IP routing
+- Linux kernel: coarse IP routing
+- Mihomo: SNI sniffing / fine-grained routing
 
-Mihomo
-    ↓
-SNI sniffing / domain rules
-    ↓
-fine-grained DIRECT / PROXY routing
-```
-
-This keeps the kernel routing layer simple and allows Mihomo's SNI sniffing to deal with DNS pollution or incorrect destination IPs.
+This keeps the kernel routing layer simple and allows Mihomo's SNI `override-destination` to deal with DNS pollution or incorrect destination IPs.
 
 ---
 
@@ -124,13 +104,13 @@ Some domains resolve to China mainland addresses even though their traffic shoul
 A typical example is:
 
 ```text id="xoh0dk"
-bing.com
+www.bing.com
 ```
 
 Without special handling:
 
 ```text id="ai10f7"
-bing.com
+www.bing.com
    ↓
 China IP
    ↓
@@ -147,7 +127,7 @@ Configure such domains with:
 
 ```sh id="cbkrqv"
 FORCE_META_DOMAINS="
-bing.com
+www.bing.com
 "
 ```
 
@@ -156,7 +136,7 @@ At startup, the script resolves each domain.
 For example:
 
 ```text id="en8g5m"
-bing.com
+www.bing.com
     ↓
 202.89.233.100
 ```
