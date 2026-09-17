@@ -50,6 +50,58 @@ so Mihomo's outbound connections never loop back into its own TUN interface.
 
 ---
 
+## Requirements
+
+Install:
+
+```sh id="wd3k7k"
+opkg update
+opkg install ip-full resolveip
+```
+
+The script also requires either `wget` or `curl`.
+
+OpenWrt normally includes `wget`.
+
+Start `mihomo` and let it create a tun interface `Meta`.
+
+Add the interface to OpenWrt's firewall. Other Linux system can omit this step:
+
+```sh
+uci add firewall zone
+uci set firewall.@zone[-1].name='mihomo'
+uci add_list firewall.@zone[-1].device='Meta'
+uci set firewall.@zone[-1].input='ACCEPT'
+uci set firewall.@zone[-1].output='ACCEPT'
+uci set firewall.@zone[-1].forward='ACCEPT'
+
+uci add firewall forwarding
+uci set firewall.@forwarding[-1].src='lan'
+uci set firewall.@forwarding[-1].dest='mihomo'
+
+uci commit firewall
+/etc/init.d/firewall restart
+```
+
+---
+
+## Installation
+
+Install the script as:
+
+```text id="94b99g"
+/usr/bin/meta-route.sh
+```
+
+Then:
+
+```sh id="9rv4ob"
+chmod +x /usr/bin/meta-route.sh
+/usr/bin/meta-route.sh apply
+```
+
+---
+
 ## Why This Exists
 
 A common Mihomo setup routes traffic according to DNS results.
@@ -227,38 +279,6 @@ abort before modifying routes
 ```
 
 A suspiciously short download is also rejected instead of replacing a known-good cache.
-
----
-
-## Requirements
-
-Install:
-
-```sh id="wd3k7k"
-opkg update
-opkg install ip-full resolveip
-```
-
-The script also requires either `wget` or `curl`.
-
-OpenWrt normally includes `wget`.
-
----
-
-## Installation
-
-Install the script as:
-
-```text id="94b99g"
-/usr/bin/meta-route.sh
-```
-
-Then:
-
-```sh id="9rv4ob"
-chmod +x /usr/bin/meta-route.sh
-/usr/bin/meta-route.sh apply
-```
 
 ---
 
