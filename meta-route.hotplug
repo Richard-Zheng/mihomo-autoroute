@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# Install as /etc/hotplug.d/net/99-meta-route on OpenWrt.
+
+META_DEV="Meta"
+META_ROUTE_SCRIPT="/usr/bin/meta-route.sh"
+
+[ "${DEVICENAME:-}" = "$META_DEV" ] || exit 0
+
+if [ ! -x "$META_ROUTE_SCRIPT" ]; then
+  logger -t meta-route-hotplug \
+    "WARNING: $META_ROUTE_SCRIPT is missing or not executable"
+  exit 0
+fi
+
+case "${ACTION:-}" in
+add)
+  logger -t meta-route-hotplug \
+    "$META_DEV appeared; applying policy routes"
+  "$META_ROUTE_SCRIPT" apply
+  ;;
+
+remove)
+  logger -t meta-route-hotplug \
+    "$META_DEV disappeared; clearing policy routes"
+  "$META_ROUTE_SCRIPT" clear
+  ;;
+esac
+
+exit 0

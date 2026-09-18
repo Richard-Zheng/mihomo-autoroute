@@ -101,6 +101,54 @@ chmod +x /usr/bin/meta-route.sh
 /usr/bin/meta-route.sh apply
 ```
 
+### Copy Files to OpenWrt with SCP
+
+Run these commands on the computer containing this repository. Replace `192.168.1.1` with the OpenWrt address:
+
+```sh
+scp -O meta-route.sh root@192.168.1.1:/usr/bin/meta-route.sh
+scp -O meta-route.hotplug root@192.168.1.1:/etc/hotplug.d/net/99-meta-route
+scp -O init-mihomo root@192.168.1.1:/etc/init.d/mihomo
+```
+
+The `-O` option forces the legacy SCP protocol, which is commonly needed when the OpenWrt SSH server does not provide SFTP.
+
+Then connect to OpenWrt and set the permissions:
+
+```sh
+ssh root@192.168.1.1
+chmod +x /usr/bin/meta-route.sh
+chmod +x /etc/hotplug.d/net/99-meta-route
+chmod +x /etc/init.d/mihomo
+/etc/init.d/mihomo enable
+/etc/init.d/mihomo restart
+```
+
+If SSH uses a non-default port, specify it with uppercase `-P` for `scp` and lowercase `-p` for `ssh`:
+
+```sh
+scp -O -P 2222 meta-route.sh root@192.168.1.1:/usr/bin/meta-route.sh
+ssh -p 2222 root@192.168.1.1
+```
+
+### OpenWrt Hotplug
+
+Install the included device hotplug script to apply the routing table whenever the `Meta` TUN device appears and clear it when the device disappears:
+
+```sh
+cp meta-route.hotplug /etc/hotplug.d/net/99-meta-route
+chmod +x /etc/hotplug.d/net/99-meta-route
+```
+
+The script listens for OpenWrt `net` hotplug events:
+
+```text
+DEVICENAME=Meta ACTION=add     → meta-route.sh apply
+DEVICENAME=Meta ACTION=remove  → meta-route.sh clear
+```
+
+It expects the main script at `/usr/bin/meta-route.sh`. If a different installation path is needed, change `META_ROUTE_SCRIPT` near the top of `meta-route.hotplug`.
+
 ---
 
 ## Why This Exists
