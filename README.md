@@ -8,6 +8,7 @@ It routes:
 * China mainland traffic directly
 * non-China traffic through Mihomo
 * selected China IP prefixes through Mihomo when domain-aware routing is needed
+* Mihomo proxy-node addresses directly, after resolving node server domains
 
 The kernel only performs coarse IP-based routing. Mihomo handles fine-grained `DIRECT` / `PROXY` decisions using SNI sniffing and domain rules.
 
@@ -229,6 +230,26 @@ Addresses in the same prefix are often related to the same CDN or service provid
 
 ---
 
+## Proxy Node Bypasses
+
+The script reads proxy node `server` values from the top-level `proxies:` section of:
+
+```text
+/etc/mihomo/config.yaml
+```
+
+Node domains are resolved at the end of `apply`, after the complete base routing table and Force-Meta exceptions have been installed. Each resulting IPv4 or IPv6 address is installed as a host-sized `throw` route (`/32` or `/128`), allowing the node connection to continue through the normal `main` routing table instead of entering the `Meta` interface.
+
+Set a different configuration path with the environment variable `MIHOMO_CONFIG`:
+
+```sh
+MIHOMO_CONFIG=/path/to/config.yaml meta-route.sh apply
+```
+
+This final step is best-effort: missing configuration files, DNS failures, and route-installation failures only produce warnings and do not fail `apply`. Run `refresh-domains` to resolve the node domains again and add their current addresses, or `apply` to rebuild all routes and discard stale addresses.
+
+---
+
 ## Failsafe Design
 
 The script is designed so optional features fail safely.
@@ -427,7 +448,7 @@ meta-route.sh update
 meta-route.sh restart
 ```
 
-Refresh only Force-Meta domain resolution:
+Refresh Force-Meta domains and proxy-node domain bypasses:
 
 ```sh id="a5crs6"
 meta-route.sh refresh-domains
@@ -453,7 +474,7 @@ meta-route.sh stop
 
 ### Note on `refresh-domains`
 
-`refresh-domains` only removes additional matching China prefixes.
+For Force-Meta domains, `refresh-domains` only removes additional matching China prefixes. For proxy nodes, it adds or replaces routes for newly resolved addresses, but does not remove stale node addresses.
 
 It does not restore prefixes removed by an earlier resolution.
 
@@ -666,4 +687,3 @@ Mihomo:
 ```
 
 This keeps the routing layer small, predictable, and resilient to DNS or update failures.
-

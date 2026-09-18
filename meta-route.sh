@@ -20,6 +20,10 @@ META_RULE_PREF="10010"
 CACHE_DIR="/etc/meta-route"
 CN_FILE="$CACHE_DIR/all_cn_ipv46.txt"
 
+# Resolved addresses of proxy nodes in this Mihomo configuration are
+# installed as host-sized throw routes so Mihomo can reach them directly.
+MIHOMO_CONFIG="${MIHOMO_CONFIG:-/etc/mihomo/config.yaml}"
+
 # DNS lookup timeout for each force-Meta domain.
 RESOLVE_TIMEOUT="3"
 
@@ -304,11 +308,110 @@ exclude_force_meta_domains() {
   done
 }
 
+list_node_servers() {
+  [ -r "$MIHOMO_CONFIG" ] || return 0
+
+  # Read only server fields below the top-level "proxies" key. This avoids
+  # treating DNS servers, provider URLs, and other unrelated server fields as
+  # proxy nodes. Both quoted and unquoted scalar values are accepted.
+  awk '
+        /^[[:space:]]*#/ { next }
+
+        /^[^[:space:]]/ {
+            in_proxies = ($0 ~ /^proxies[[:space:]]*:/)
+            next
+        }
+
+        in_proxies && $0 ~ /(^|[,{[:space:]])server[[:space:]]*:/ {
+            value = $0
+            sub(/^.*(^|[,{[:space:]])server[[:space:]]*:[[:space:]]*/, "", value)
+
+            if (value ~ /^"/) {
+                sub(/^"/, "", value)
+                sub(/".*$/, "", value)
+            } else if (value ~ /^\047/) {
+                sub(/^\047/, "", value)
+                sub(/\047.*$/, "", value)
+            } else {
+                sub(/[},].*$/, "", value)
+            }
+
+            sub(/[[:space:]]+#.*$/, "", value)
+            sub(/[[:space:]]+$/, "", value)
+
+            if (value != "") print value
+        }
+    ' "$MIHOMO_CONFIG" |
+    sort -u
+}
+
+resolve_node_servers() {
+  output="$1"
+  : >"$output"
+
+  if [ ! -r "$MIHOMO_CONFIG" ]; then
+    warn "Mihomo config is not readable: $MIHOMO_CONFIG; skipping node bypasses"
+    return 0
+  fi
+
+  servers="$(list_node_servers)"
+
+  if [ -z "$servers" ]; then
+    log "No proxy node servers found in $MIHOMO_CONFIG"
+    return 0
+  fi
+
+  printf '%s\n' "$servers" |
+    while IFS= read -r server; do
+      [ -n "$server" ] || continue
+      log "Resolving proxy node server: $server"
+
+      addresses="$(resolveip -t "$RESOLVE_TIMEOUT" "$server" 2>/dev/null)"
+
+      if [ -z "$addresses" ]; then
+        warn "Could not resolve proxy node server $server; skipping its bypass"
+        continue
+      fi
+
+      printf '%s\n' "$addresses" |
+        awk '
+              /^[0-9A-Fa-f:.]+$/ && (index($0, ".") || index($0, ":")) {
+                  print
+              }
+            ' >>"$output"
+    done
+
+  sort -u "$output" -o "$output"
+  count="$(wc -l <"$output")"
+  log "Resolved $count unique proxy node addresses for bypass"
+}
+
+install_node_bypasses() {
+  addresses_file="$1"
+
+  while IFS= read -r addr; do
+    [ -n "$addr" ] || continue
+
+    case "$addr" in
+    *:*)
+      ipv6_enabled || continue
+      family="-6"
+      host="$addr/128"
+      ;;
+    *) family="-4"; host="$addr/32" ;;
+    esac
+
+    ip "$family" route replace throw "$host" table "$TABLE" 2>/dev/null ||
+      warn "Failed to install proxy node bypass for $addr"
+  done <"$addresses_file"
+}
+
 install_routes() {
   v4_batch="/tmp/meta-route-v4.$$"
   v6_batch="/tmp/meta-route-v6.$$"
+  node_addresses="/tmp/meta-route-nodes.$$"
 
-  trap 'rm -f "$v4_batch" "$v6_batch"' EXIT INT TERM
+  trap 'rm -f "$v4_batch" "$v6_batch" "$node_addresses"' EXIT INT TERM
 
   log "Building routing table..."
 
@@ -342,7 +445,12 @@ install_routes() {
   #
   exclude_force_meta_domains
 
-  rm -f "$v4_batch" "$v6_batch"
+  # Resolve and install proxy-node bypasses last. Both DNS and route failures
+  # are non-fatal: the complete base table remains usable if this step fails.
+  resolve_node_servers "$node_addresses"
+  install_node_bypasses "$node_addresses"
+
+  rm -f "$v4_batch" "$v6_batch" "$node_addresses"
   trap - EXIT INT TERM
 
   log "Routing table installed"
@@ -441,13 +549,22 @@ clear_routes() {
 refresh_domains() {
   check_requirements
 
+  node_addresses="/tmp/meta-route-nodes.$$"
+  trap 'rm -f "$node_addresses"' EXIT INT TERM
+
   #
-  # This intentionally only removes additional CN routes.
+  # Force-Meta refresh only removes additional CN routes, while node
+  # bypasses are added or replaced with their latest resolved addresses.
   #
   # It never restores routes removed by a previous resolution. A full
   # 'apply' reconstructs the table from the CN list from scratch.
   #
   exclude_force_meta_domains
+  resolve_node_servers "$node_addresses"
+  install_node_bypasses "$node_addresses"
+
+  rm -f "$node_addresses"
+  trap - EXIT INT TERM
 }
 
 status() {
