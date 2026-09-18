@@ -5,7 +5,7 @@ set -u
 URL="https://ispip.clang.cn/all_cn_ipv46.txt"
 
 META_DEV="Meta"
-TABLE="2022"
+TABLE="2026"
 
 # mihomo routing-mark: 6666
 MIHOMO_MARK="6666"

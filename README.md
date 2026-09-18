@@ -17,7 +17,7 @@ The kernel only performs coarse IP-based routing. Mihomo handles fine-grained `D
 The script creates a dedicated routing table:
 
 ```text id="r1k4v1"
-table 2022
+table 2026
 ```
 
 with roughly this structure:
@@ -383,7 +383,7 @@ META_DEV="Meta"
 ### Routing table
 
 ```sh id="j3squa"
-TABLE="2022"
+TABLE="2026"
 ```
 
 ### Mihomo routing mark
@@ -543,7 +543,7 @@ A typical rule set looks like:
 ```text id="id0vwc"
 0:      from all lookup local
 10000:  from all fwmark 0x1a0a lookup main
-10010:  from all lookup 2022
+10010:  from all lookup 2026
 32766:  from all lookup main
 32767:  from all lookup default
 ```
@@ -569,7 +569,7 @@ before:
 ```text id="uk1pr1"
 normal traffic
      ↓
- table 2022
+ table 2026
 ```
 
 This prevents routing loops.
@@ -653,22 +653,22 @@ dev Meta
 ### Inspect the policy table
 
 ```sh id="pc09s7"
-ip -4 route show table 2022
-ip -6 route show table 2022
+ip -4 route show table 2026
+ip -6 route show table 2026
 ```
 
 ### Inspect China routes
 
 ```sh id="kjuw5e"
-ip -4 route show table 2022 proto 66
-ip -6 route show table 2022 proto 66
+ip -4 route show table 2026 proto 66
+ip -6 route show table 2026 proto 66
 ```
 
 ### Find the China prefix containing an IPv4 address
 
 ```sh id="cl8r9s"
 ip -4 route show \
-    table 2022 \
+    table 2026 \
     match 202.89.233.100/32 \
     proto 66 \
     type throw
@@ -678,7 +678,7 @@ For IPv6:
 
 ```sh id="wxhkav"
 ip -6 route show \
-    table 2022 \
+    table 2026 \
     match 2001:db8::1/128 \
     proto 66 \
     type throw
