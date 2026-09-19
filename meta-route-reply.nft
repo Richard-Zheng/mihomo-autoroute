@@ -1,0 +1,21 @@
+# Install as /etc/nftables.d/meta-route-reply.nft (inside table inet fw4).
+# fw4 defines $wan_devices from the OpenWrt "wan" firewall zone.
+# Bit 0x40000000 is reserved for replies to connections initiated from WAN.
+
+chain meta_route_prerouting {
+    type filter hook prerouting priority mangle; policy accept;
+
+    # Save the origin on the connection, without changing the incoming packet's
+    # routing mark. This also covers DNAT port forwards and IPv6 services.
+    iifname $wan_devices ct state { new, related } ct direction original counter ct mark set ct mark | 0x40000000
+
+    # Forwarded replies must be marked before the route lookup.
+    ct direction reply ct mark & 0x40000000 != 0 counter meta mark set meta mark | 0x40000000
+}
+
+chain meta_route_output {
+    type route hook output priority mangle; policy accept;
+
+    # The route chain triggers a second lookup for locally generated replies.
+    ct direction reply ct mark & 0x40000000 != 0 counter meta mark set meta mark | 0x40000000
+}

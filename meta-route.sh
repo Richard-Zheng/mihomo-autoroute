@@ -10,6 +10,11 @@ TABLE="2026"
 # mihomo routing-mark: 6666
 MIHOMO_MARK="6666"
 
+# Packet-mark bit set by the fw4 or fw3 reply rules on replies to WAN-originated
+# connections. Keep it distinct from Mihomo's socket mark and other mark bits.
+REPLY_MARK="0x40000000/0x40000000"
+REPLY_RULE_PREF="9990"
+
 # Routes imported from the CN IP list are tagged with this protocol ID.
 # This lets us distinguish them from LAN/private throw routes.
 CN_PROTO="66"
@@ -458,6 +463,22 @@ install_routes() {
 
 remove_rules() {
   while ip -4 rule del \
+    pref "$REPLY_RULE_PREF" \
+    fwmark "$REPLY_MARK" \
+    lookup main \
+    2>/dev/null; do
+    :
+  done
+
+  while ip -6 rule del \
+    pref "$REPLY_RULE_PREF" \
+    fwmark "$REPLY_MARK" \
+    lookup main \
+    2>/dev/null; do
+    :
+  done
+
+  while ip -4 rule del \
     pref "$MARK_RULE_PREF" \
     fwmark "$MIHOMO_MARK" \
     lookup main \
@@ -491,6 +512,13 @@ remove_rules() {
 install_rules() {
   remove_rules
 
+  # Replies to WAN-originated connections keep the path of the incoming
+  # connection. This must precede the catch-all Meta routing rule.
+  ip -4 rule add \
+    pref "$REPLY_RULE_PREF" \
+    fwmark "$REPLY_MARK" \
+    lookup main
+
   #
   # Loop prevention:
   #
@@ -507,6 +535,11 @@ install_rules() {
     lookup "$TABLE"
 
   if ipv6_enabled; then
+    ip -6 rule add \
+      pref "$REPLY_RULE_PREF" \
+      fwmark "$REPLY_MARK" \
+      lookup main
+
     ip -6 rule add \
       pref "$MARK_RULE_PREF" \
       fwmark "$MIHOMO_MARK" \

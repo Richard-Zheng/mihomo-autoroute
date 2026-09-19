@@ -9,6 +9,7 @@ It routes:
 * non-China traffic through Mihomo
 * selected China IP prefixes through Mihomo when domain-aware routing is needed
 * Mihomo proxy-node addresses directly, after resolving node server domains
+* replies to connections initiated from WAN directly, including local services and port forwards
 
 The kernel only performs coarse IP-based routing. Mihomo handles fine-grained `DIRECT` / `PROXY` decisions using SNI sniffing and domain rules.
 
@@ -48,6 +49,11 @@ fwmark 6666 → main
 ```
 
 so Mihomo's outbound connections never loop back into its own TUN interface.
+
+For public inbound services, a small firewall rule set records which
+connections started on WAN. Use `meta-route-reply.nft` on fw4 or
+`meta-route-reply-iptables.sh` on fw3. Their replies receive a separate mark
+and use `main` before the destination-based Meta rule is considered.
 
 ---
 
@@ -122,6 +128,64 @@ chmod +x /etc/hotplug.d/net/99-meta-route
 chmod +x /etc/init.d/mihomo
 /etc/init.d/mihomo enable
 /etc/init.d/mihomo restart
+```
+
+When you expose a service on the router or forward a WAN port to a LAN device,
+install one of the following firewall integrations before testing the service.
+Existing connections are not tagged retroactively; test with a new connection.
+
+#### fw4 / nftables
+
+```sh
+scp -O meta-route-reply.nft root@192.168.1.1:/etc/nftables.d/meta-route-reply.nft
+```
+
+On the router:
+
+```sh
+fw4 check
+/etc/init.d/firewall restart
+```
+
+`fw4 check` must pass before restarting the firewall. This include expects
+the standard OpenWrt firewall zone named `wan`; it uses the zone's actual
+devices, including PPPoE and VLAN devices.
+
+#### fw3 / iptables
+
+```sh
+scp -O meta-route-reply-iptables.sh root@192.168.1.1:/usr/bin/meta-route-reply-iptables.sh
+```
+
+On the router, make it executable and add this include to
+`/etc/config/firewall`:
+
+```sh
+chmod +x /usr/bin/meta-route-reply-iptables.sh
+```
+
+```text
+config include
+    option type 'script'
+    option path '/usr/bin/meta-route-reply-iptables.sh'
+    option reload '1'
+```
+
+Then run `/etc/init.d/firewall restart`. The script reads the default WAN
+devices from the `main` IPv4 and IPv6 routing tables and installs idempotent
+`mangle PREROUTING` and `mangle OUTPUT` rules. It requires the iptables
+`conntrack`, `connmark`, `CONNMARK`, and `MARK` extensions. Use the same
+iptables backend as fw3 (usually `iptables-legacy` on older OpenWrt). The
+script assumes one active WAN whose return route is in `main`. `WAN4_DEV`
+and `WAN6_DEV` can override device detection, but they do not solve
+multiple-WAN return routing; that needs a separate table per WAN.
+
+The script can also be run manually:
+
+```sh
+meta-route-reply-iptables.sh apply
+meta-route-reply-iptables.sh status
+meta-route-reply-iptables.sh clear
 ```
 
 If SSH uses a non-default port, specify it with uppercase `-P` for `scp` and lowercase `-p` for `ssh`:
@@ -542,6 +606,7 @@ A typical rule set looks like:
 
 ```text id="id0vwc"
 0:      from all lookup local
+9990:   from all fwmark 0x40000000/0x40000000 lookup main
 10000:  from all fwmark 0x1a0a lookup main
 10010:  from all lookup 2026
 32766:  from all lookup main
@@ -573,6 +638,21 @@ normal traffic
 ```
 
 This prevents routing loops.
+
+### Public inbound service replies
+
+Both firewall integrations mark the conntrack entry when a new connection
+arrives on WAN. They mark only packets in the reply direction before their
+route lookup: forwarded replies in `PREROUTING`, and router-local replies in
+`OUTPUT`. The `9990` rule sends them through `main`, preserving the WAN
+return path and the port forward's reverse NAT. Other LAN traffic still follows
+the usual China/Meta split.
+
+The reply bit is `0x40000000` in both the conntrack mark and packet mark. It is
+ORed into existing marks; reserve this bit if another policy-routing package
+also uses marks. This setup assumes `main` routes back through the public WAN.
+If you use multiple WANs, each ingress WAN needs its own mark and matching
+return routing table to guarantee that replies leave through the same WAN.
 
 ---
 
@@ -649,6 +729,31 @@ It must not contain:
 ```text id="98jg1c"
 dev Meta
 ```
+
+### Verify public-service return routing
+
+```sh
+ip -4 route get 8.8.8.8 mark 0x40000000
+```
+
+On fw4:
+
+```sh
+nft list chain inet fw4 meta_route_prerouting
+nft list chain inet fw4 meta_route_output
+```
+
+On fw3:
+
+```sh
+meta-route-reply-iptables.sh status
+```
+
+The marked route must use WAN rather than `Meta`. For a port forward, test from
+an external network and confirm the connection works with a client outside the
+China IP list. The firewall rule counters should increase for the new inbound
+connection and its replies. A working route lookup alone does not prove that
+the firewall allows the inbound port or that the service is listening.
 
 ### Inspect the policy table
 
