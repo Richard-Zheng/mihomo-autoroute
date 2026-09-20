@@ -107,71 +107,44 @@ chmod +x /usr/bin/meta-route.sh
 /usr/bin/meta-route.sh apply
 ```
 
-### Copy Files to OpenWrt with SCP
+### Deploy to OpenWrt
 
-Run these commands on the computer containing this repository. Replace `192.168.1.1` with the OpenWrt address:
-
-```sh
-scp -O meta-route.sh root@192.168.1.1:/usr/bin/meta-route.sh
-scp -O meta-route.hotplug root@192.168.1.1:/etc/hotplug.d/net/99-meta-route
-scp -O init-mihomo root@192.168.1.1:/etc/init.d/mihomo
-```
-
-The `-O` option forces the legacy SCP protocol, which is commonly needed when the OpenWrt SSH server does not provide SFTP.
-
-Then connect to OpenWrt and set the permissions:
+Run the deployment script from this repository:
 
 ```sh
-ssh root@192.168.1.1
-chmod +x /usr/bin/meta-route.sh
-chmod +x /etc/hotplug.d/net/99-meta-route
-chmod +x /etc/init.d/mihomo
-/etc/init.d/mihomo enable
-/etc/init.d/mihomo restart
+./deploy.sh
 ```
 
-When you expose a service on the router or forward a WAN port to a LAN device,
-install one of the following firewall integrations before testing the service.
-Existing connections are not tagged retroactively; test with a new connection.
+The default target is `root@192.168.1.1`. Pass another SSH destination when
+needed:
+
+```sh
+./deploy.sh root@openwrt.example
+```
+
+It installs `meta-route.sh`, its hotplug hook, and the Mihomo init script. It
+detects the active firewall backend from `/etc/init.d/firewall`: on fw4 it
+installs the nftables reply-mark include and runs `fw4 check`; on fw3 it
+installs the iptables reply-mark script and its UCI firewall include. It then
+restarts the firewall, enables and restarts Mihomo, and applies the policy
+routes.
+
+The script uses legacy SCP (`-O`) because many OpenWrt SSH servers do not
+provide SFTP.
+
+When exposing a service or forwarding a WAN port, new connections are tagged;
+existing connections are not tagged retroactively.
 
 #### fw4 / nftables
 
-```sh
-scp -O meta-route-reply.nft root@192.168.1.1:/etc/nftables.d/meta-route-reply.nft
-```
-
-On the router:
-
-```sh
-fw4 check
-/etc/init.d/firewall restart
-```
-
-`fw4 check` must pass before restarting the firewall. This include expects
+`deploy.sh` installs this include and runs `fw4 check` before restarting the
+firewall. This include expects
 the standard OpenWrt firewall zone named `wan`; it uses the zone's actual
 devices, including PPPoE and VLAN devices.
 
 #### fw3 / iptables
 
-```sh
-scp -O meta-route-reply-iptables.sh root@192.168.1.1:/usr/bin/meta-route-reply-iptables.sh
-```
-
-On the router, make it executable and add this include to
-`/etc/config/firewall`:
-
-```sh
-chmod +x /usr/bin/meta-route-reply-iptables.sh
-```
-
-```text
-config include
-    option type 'script'
-    option path '/usr/bin/meta-route-reply-iptables.sh'
-    option reload '1'
-```
-
-Then run `/etc/init.d/firewall restart`. The script reads the default WAN
+`deploy.sh` installs this script and adds its UCI firewall include. The script reads the default WAN
 devices from the `main` IPv4 and IPv6 routing tables and installs idempotent
 `mangle PREROUTING` and `mangle OUTPUT` rules. It requires the iptables
 `conntrack`, `connmark`, `CONNMARK`, and `MARK` extensions. Use the same
