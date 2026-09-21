@@ -26,12 +26,11 @@ CACHE_DIR="/etc/meta-route"
 CN_FILE="$CACHE_DIR/all_cn_ipv46.txt"
 
 # Serialize route changes triggered by init, hotplug, and manual deployment.
-# A directory lock works with BusyBox/POSIX tools and needs no flock package.
-LOCK_DIR="${LOCK_DIR:-/var/run/meta-route.lock}"
-LOCK_HELD="0"
+# Keep this file in place: removing it could let another process lock a new inode.
+LOCK_FILE="${LOCK_FILE:-/var/run/meta-route.flock}"
 
-# Temporary files owned by this process. The exit trap removes them together
-# with the lock if the process is interrupted.
+# Temporary files owned by this process. The exit trap removes them if the
+# process is interrupted; the kernel releases the flock when it exits.
 TMP_V4=""
 TMP_V6=""
 TMP_NODES=""
@@ -57,50 +56,23 @@ cleanup() {
   [ -z "$TMP_V4" ] || rm -f "$TMP_V4"
   [ -z "$TMP_V6" ] || rm -f "$TMP_V6"
   [ -z "$TMP_NODES" ] || rm -f "$TMP_NODES"
-
-  if [ "$LOCK_HELD" = "1" ]; then
-    rm -f "$LOCK_DIR/pid"
-    rmdir "$LOCK_DIR" 2>/dev/null || true
-    LOCK_HELD="0"
-  fi
 }
 
-release_lock() {
-  cleanup
-  trap - EXIT HUP INT TERM
-}
-
-acquire_lock() {
+run_exclusive() {
+  command -v flock >/dev/null 2>&1 || die "'flock' is missing"
+  exec 9>"$LOCK_FILE" || die "Cannot open lock file $LOCK_FILE"
   trap cleanup EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-    if [ -n "$owner" ]; then
-      log "Another meta-route operation (PID $owner) is running; waiting"
-    else
-      log "Another meta-route operation is running; waiting"
-    fi
-
-    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-      sleep 1
-    done
-  fi
-
-  LOCK_HELD="1"
-  printf '%s\n' "$$" >"$LOCK_DIR/pid" || {
-    release_lock
-    die "Cannot write lock owner to $LOCK_DIR/pid"
-  }
-}
-
-run_exclusive() {
-  acquire_lock
+  flock 9 || die "Cannot lock $LOCK_FILE"
   "$@"
   rc=$?
-  release_lock
+  cleanup
+  flock -u 9 || die "Cannot unlock $LOCK_FILE"
+  exec 9>&-
+  trap - EXIT HUP INT TERM
   return "$rc"
 }
 

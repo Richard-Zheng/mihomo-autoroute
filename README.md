@@ -66,9 +66,9 @@ opkg update
 opkg install ip-full resolveip
 ```
 
-The script also requires either `wget` or `curl`.
+The script also requires `flock` and either `wget` or `curl`.
 
-OpenWrt normally includes `wget`.
+The tested OpenWrt router provides `flock` through BusyBox. OpenWrt normally includes `wget`.
 
 Start `mihomo` and let it create a tun interface `Meta`.
 
@@ -556,6 +556,10 @@ or:
 ```sh id="cdreqa"
 meta-route.sh stop
 ```
+
+`apply`, `refresh-domains`, and `clear` use a `flock` lock at
+`/var/run/meta-route.flock` so hotplug and manual runs do not change routes
+concurrently. The lock is released automatically if the process exits.
 
 ### Note on `refresh-domains`
 
