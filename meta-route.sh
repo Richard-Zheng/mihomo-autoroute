@@ -25,6 +25,17 @@ META_RULE_PREF="10010"
 CACHE_DIR="/etc/meta-route"
 CN_FILE="$CACHE_DIR/all_cn_ipv46.txt"
 
+# Serialize route changes triggered by init, hotplug, and manual deployment.
+# A directory lock works with BusyBox/POSIX tools and needs no flock package.
+LOCK_DIR="${LOCK_DIR:-/var/run/meta-route.lock}"
+LOCK_HELD="0"
+
+# Temporary files owned by this process. The exit trap removes them together
+# with the lock if the process is interrupted.
+TMP_V4=""
+TMP_V6=""
+TMP_NODES=""
+
 # Resolved addresses of proxy nodes in this Mihomo configuration are
 # installed as host-sized throw routes so Mihomo can reach them directly.
 MIHOMO_CONFIG="${MIHOMO_CONFIG:-/etc/mihomo/config.yaml}"
@@ -41,6 +52,57 @@ FORCE_META_DOMAINS="
 www.bing.com
 bing.com
 "
+
+cleanup() {
+  [ -z "$TMP_V4" ] || rm -f "$TMP_V4"
+  [ -z "$TMP_V6" ] || rm -f "$TMP_V6"
+  [ -z "$TMP_NODES" ] || rm -f "$TMP_NODES"
+
+  if [ "$LOCK_HELD" = "1" ]; then
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+    LOCK_HELD="0"
+  fi
+}
+
+release_lock() {
+  cleanup
+  trap - EXIT HUP INT TERM
+}
+
+acquire_lock() {
+  trap cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ]; then
+      log "Another meta-route operation (PID $owner) is running; waiting"
+    else
+      log "Another meta-route operation is running; waiting"
+    fi
+
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+      sleep 1
+    done
+  fi
+
+  LOCK_HELD="1"
+  printf '%s\n' "$$" >"$LOCK_DIR/pid" || {
+    release_lock
+    die "Cannot write lock owner to $LOCK_DIR/pid"
+  }
+}
+
+run_exclusive() {
+  acquire_lock
+  "$@"
+  rc=$?
+  release_lock
+  return "$rc"
+}
 
 log() {
   logger -t meta-route "$*"
@@ -412,18 +474,16 @@ install_node_bypasses() {
 }
 
 install_routes() {
-  v4_batch="/tmp/meta-route-v4.$$"
-  v6_batch="/tmp/meta-route-v6.$$"
-  node_addresses="/tmp/meta-route-nodes.$$"
-
-  trap 'rm -f "$v4_batch" "$v6_batch" "$node_addresses"' EXIT INT TERM
+  TMP_V4="/tmp/meta-route-v4.$$"
+  TMP_V6="/tmp/meta-route-v6.$$"
+  TMP_NODES="/tmp/meta-route-nodes.$$"
 
   log "Building routing table..."
 
-  build_v4_batch "$v4_batch"
+  build_v4_batch "$TMP_V4"
 
   if ipv6_enabled; then
-    build_v6_batch "$v6_batch"
+    build_v6_batch "$TMP_V6"
   fi
 
   #
@@ -435,13 +495,13 @@ install_routes() {
   #
   ip -4 route flush table "$TABLE" 2>/dev/null
 
-  ip -4 -batch "$v4_batch" ||
+  ip -4 -batch "$TMP_V4" ||
     die "Failed to install IPv4 routes"
 
   if ipv6_enabled; then
     ip -6 route flush table "$TABLE" 2>/dev/null
 
-    ip -6 -batch "$v6_batch" ||
+    ip -6 -batch "$TMP_V6" ||
       die "Failed to install IPv6 routes"
   fi
 
@@ -452,11 +512,13 @@ install_routes() {
 
   # Resolve and install proxy-node bypasses last. Both DNS and route failures
   # are non-fatal: the complete base table remains usable if this step fails.
-  resolve_node_servers "$node_addresses"
-  install_node_bypasses "$node_addresses"
+  resolve_node_servers "$TMP_NODES"
+  install_node_bypasses "$TMP_NODES"
 
-  rm -f "$v4_batch" "$v6_batch" "$node_addresses"
-  trap - EXIT INT TERM
+  rm -f "$TMP_V4" "$TMP_V6" "$TMP_NODES"
+  TMP_V4=""
+  TMP_V6=""
+  TMP_NODES=""
 
   log "Routing table installed"
 }
@@ -579,11 +641,15 @@ clear_routes() {
   log "Meta routing disabled"
 }
 
+clear_all() {
+  check_requirements
+  clear_routes
+}
+
 refresh_domains() {
   check_requirements
 
-  node_addresses="/tmp/meta-route-nodes.$$"
-  trap 'rm -f "$node_addresses"' EXIT INT TERM
+  TMP_NODES="/tmp/meta-route-nodes.$$"
 
   #
   # Force-Meta refresh only removes additional CN routes, while node
@@ -593,11 +659,11 @@ refresh_domains() {
   # 'apply' reconstructs the table from the CN list from scratch.
   #
   exclude_force_meta_domains
-  resolve_node_servers "$node_addresses"
-  install_node_bypasses "$node_addresses"
+  resolve_node_servers "$TMP_NODES"
+  install_node_bypasses "$TMP_NODES"
 
-  rm -f "$node_addresses"
-  trap - EXIT INT TERM
+  rm -f "$TMP_NODES"
+  TMP_NODES=""
 }
 
 status() {
@@ -625,16 +691,15 @@ status() {
 
 case "${1:-apply}" in
 apply | start | update | restart)
-  apply
+  run_exclusive apply
   ;;
 
 refresh-domains)
-  refresh_domains
+  run_exclusive refresh_domains
   ;;
 
 clear | stop)
-  check_requirements
-  clear_routes
+  run_exclusive clear_all
   ;;
 
 status)
