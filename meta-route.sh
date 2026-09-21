@@ -543,12 +543,23 @@ remove_rules() {
   done
 }
 
+add_rule_or_die() {
+  rule_description="$1"
+  shift
+
+  ip "$@" && return 0
+
+  # Try to remove rules already added during this attempt.
+  remove_rules
+  die "Failed to add $rule_description policy rule"
+}
+
 install_rules() {
   remove_rules
 
   # Replies to WAN-originated connections keep the path of the incoming
   # connection. This must precede the catch-all Meta routing rule.
-  ip -4 rule add \
+  add_rule_or_die "IPv4 WAN reply" -4 rule add \
     pref "$REPLY_RULE_PREF" \
     fwmark "$REPLY_MARK" \
     lookup main
@@ -559,27 +570,27 @@ install_rules() {
   # mihomo outbound sockets carry routing-mark 6666 and therefore
   # bypass table $TABLE completely.
   #
-  ip -4 rule add \
+  add_rule_or_die "IPv4 Mihomo bypass" -4 rule add \
     pref "$MARK_RULE_PREF" \
     fwmark "$MIHOMO_MARK" \
     lookup main
 
-  ip -4 rule add \
+  add_rule_or_die "IPv4 Meta routing" -4 rule add \
     pref "$META_RULE_PREF" \
     lookup "$TABLE"
 
   if ipv6_enabled; then
-    ip -6 rule add \
+    add_rule_or_die "IPv6 WAN reply" -6 rule add \
       pref "$REPLY_RULE_PREF" \
       fwmark "$REPLY_MARK" \
       lookup main
 
-    ip -6 rule add \
+    add_rule_or_die "IPv6 Mihomo bypass" -6 rule add \
       pref "$MARK_RULE_PREF" \
       fwmark "$MIHOMO_MARK" \
       lookup main
 
-    ip -6 rule add \
+    add_rule_or_die "IPv6 Meta routing" -6 rule add \
       pref "$META_RULE_PREF" \
       lookup "$TABLE"
   fi
